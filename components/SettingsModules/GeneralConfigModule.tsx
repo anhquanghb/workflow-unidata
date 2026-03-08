@@ -1,0 +1,1036 @@
+import React, { useState, useEffect } from 'react';
+import { SystemSettings, SchoolInfo, AcademicYear, GoogleDriveConfig, PermissionProfile, AcademicYearConfig, DailySchedule, Holiday, WorkingSession } from '../../types';
+import { Users, UserPlus, Trash2, Folder, File, RefreshCw, Loader2, Lock, Eye, Share2, ChevronRight, AlertTriangle, PlusCircle, CheckCircle, Database, Save, Edit2, X, Settings, Shield, Globe, HardDrive, Copy, Calendar, Clock } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
+
+interface GeneralConfigModuleProps {
+  settings: SystemSettings;
+  driveSession: GoogleDriveConfig;
+  schoolInfo: SchoolInfo;
+  academicYears: AcademicYear[];
+  onUpdateSettings: (settings: SystemSettings) => void;
+  onUpdateSchoolInfo: (info: SchoolInfo) => void;
+  onAddAcademicYear: (year: AcademicYear) => void;
+  onUpdateAcademicYear: (year: AcademicYear) => void;
+  onDeleteAcademicYear: (id: string) => void;
+  onToggleLockAcademicYear: (id: string) => void;
+  
+  // Drive Props passed from parent
+  manualClientId: string;
+  setManualClientId: (val: string) => void;
+  driveFolderId: string;
+  setDriveFolderId: (val: string) => void;
+  
+  // New props for Folder Creation
+  onCreateDefaultFolders: () => void;
+  isCreatingFolder: boolean;
+  scanStatus?: {
+      foundFolder: boolean;
+      foundZoneA: boolean;
+      foundZoneB: boolean;
+      foundZoneC: boolean;
+      backupCount: number;
+  };
+
+  // New prop for external source
+  externalSourceFolderId?: string;
+  setExternalSourceFolderId?: (val: string) => void;
+
+  // New props for Registry Update
+  onUpdatePublicRegistry?: () => void;
+  isUpdatingRegistry?: boolean;
+
+  envClientId: string;
+  effectiveClientId: string;
+  onConnectDrive: () => void;
+  onDisconnectDrive: () => void;
+  onSaveDriveConfigOnly: () => void;
+  onSetCurrentYear: (code: string) => void;
+}
+
+interface DrivePermission {
+  id: string;
+  type: string;
+  emailAddress?: string;
+  role: string;
+  displayName?: string;
+  photoLink?: string;
+}
+
+interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  permissions?: DrivePermission[];
+}
+
+const GeneralConfigModule: React.FC<GeneralConfigModuleProps> = ({
+  settings,
+  driveSession,
+  schoolInfo,
+  academicYears,
+  onUpdateSettings,
+  onUpdateSchoolInfo,
+  onAddAcademicYear,
+  onUpdateAcademicYear,
+  onDeleteAcademicYear,
+  onToggleLockAcademicYear,
+  manualClientId, setManualClientId,
+  driveFolderId, setDriveFolderId,
+  onCreateDefaultFolders, isCreatingFolder, scanStatus,
+  externalSourceFolderId, setExternalSourceFolderId,
+  onUpdatePublicRegistry, isUpdatingRegistry,
+  envClientId, effectiveClientId,
+  onConnectDrive, onDisconnectDrive, onSaveDriveConfigOnly,
+  onSetCurrentYear
+}) => {
+  // Local states
+  const [virtualAssistantUrl, setVirtualAssistantUrl] = useState(settings.virtualAssistantUrl || "https://gemini.google.com/app");
+  const [newYearCode, setNewYearCode] = useState('');
+  const [editingYearId, setEditingYearId] = useState<string | null>(null);
+  const [editYearCode, setEditYearCode] = useState('');
+  const [editingSchool, setEditingSchool] = useState(false);
+  const [editSchoolName, setEditSchoolName] = useState(schoolInfo.school_name);
+  const [editSchoolCode, setEditSchoolCode] = useState(schoolInfo.school_code);
+  const [editPublicDriveId, setEditPublicDriveId] = useState(schoolInfo.publicDriveId || '');
+
+  // --- DRIVE SHARING STATE ---
+  const [rootPermissions, setRootPermissions] = useState<DrivePermission[]>([]);
+  const [folderContents, setFolderContents] = useState<DriveFile[]>([]);
+  const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);
+  const [selectedFilePermissions, setSelectedFilePermissions] = useState<DrivePermission[]>([]);
+  
+  const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
+  const [isLoadingContent, setIsLoadingContent] = useState(false);
+  const [shareEmailRoot, setShareEmailRoot] = useState('');
+  const [shareEmailFile, setShareEmailFile] = useState('');
+  const [isSharing, setIsSharing] = useState(false);
+
+  const [editingYearConfigId, setEditingYearConfigId] = useState<string | null>(null);
+  const [tempYearConfig, setTempYearConfig] = useState<AcademicYearConfig | null>(null);
+
+  const permission = settings.permissionProfile || { role: 'school_admin', canEditDataConfig: true, canEditOrgStructure: true, canProposeEditProcess: true };
+  const isUnitManager = permission.role === 'unit_manager';
+
+  const DEFAULT_WORKING_SCHEDULE: DailySchedule[] = [
+      { day: 'Thứ Hai', morning: { start: '07:00', end: '11:30' }, afternoon: { start: '13:00', end: '17:00' }, isOff: false },
+      { day: 'Thứ Ba', morning: { start: '07:00', end: '11:30' }, afternoon: { start: '13:00', end: '17:00' }, isOff: false },
+      { day: 'Thứ Tư', morning: { start: '07:00', end: '11:30' }, afternoon: { start: '13:00', end: '17:00' }, isOff: false },
+      { day: 'Thứ Năm', morning: { start: '07:00', end: '11:30' }, afternoon: { start: '13:00', end: '17:00' }, isOff: false },
+      { day: 'Thứ Sáu', morning: { start: '07:00', end: '11:30' }, afternoon: { start: '13:00', end: '17:00' }, isOff: false },
+      { day: 'Thứ Bảy', morning: { start: '07:00', end: '11:30' }, afternoon: { start: '13:00', end: '17:00' }, isOff: false },
+      { day: 'Chủ Nhật', morning: { start: '07:00', end: '11:30' }, afternoon: { start: '13:00', end: '17:00' }, isOff: true },
+  ];
+
+  const DEFAULT_HOLIDAYS: Holiday[] = [
+      { id: uuidv4(), name: 'Tết Dương Lịch', startDate: '2024-01-01', endDate: '2024-01-01' },
+      { id: uuidv4(), name: 'Tết Âm Lịch', startDate: '2024-02-10', endDate: '2024-02-17' },
+      { id: uuidv4(), name: 'Giỗ Tổ Hùng Vương', startDate: '2024-04-18', endDate: '2024-04-18' },
+      { id: uuidv4(), name: 'Quốc tế Lao động', startDate: '2024-05-01', endDate: '2024-05-01' },
+      { id: uuidv4(), name: 'Quốc Khánh', startDate: '2024-09-02', endDate: '2024-09-02' },
+  ];
+
+  const handleSaveGeneral = () => {
+      onUpdateSettings({ ...settings, virtualAssistantUrl });
+      alert("Đã lưu cấu hình chung!");
+  };
+
+  const handleAddNewYear = () => {
+      if (!newYearCode.trim()) return;
+
+      // Inheritance Logic
+      let initialConfig: AcademicYearConfig = {
+          workingSchedule: DEFAULT_WORKING_SCHEDULE,
+          holidays: DEFAULT_HOLIDAYS
+      };
+
+      // Try to find the latest year to inherit from
+      if (academicYears.length > 0) {
+          // Sort by code descending to get the "latest" added year roughly
+          const sortedYears = [...academicYears].sort((a, b) => b.code.localeCompare(a.code));
+          const latestYear = sortedYears[0];
+          if (latestYear.config) {
+              initialConfig = JSON.parse(JSON.stringify(latestYear.config)); // Deep copy
+          }
+      }
+
+      onAddAcademicYear({
+          id: crypto.randomUUID(),
+          code: newYearCode.trim(),
+          isLocked: false,
+          config: initialConfig
+      });
+      setNewYearCode('');
+  };
+
+  const startEditingConfig = (year: AcademicYear) => {
+      setEditingYearConfigId(year.id);
+      setTempYearConfig(year.config ? JSON.parse(JSON.stringify(year.config)) : {
+          workingSchedule: DEFAULT_WORKING_SCHEDULE,
+          holidays: DEFAULT_HOLIDAYS
+      });
+  };
+
+  const saveConfig = () => {
+      if (!editingYearConfigId || !tempYearConfig) return;
+      const year = academicYears.find(y => y.id === editingYearConfigId);
+      if (year) {
+          onUpdateAcademicYear({ ...year, config: tempYearConfig });
+      }
+      setEditingYearConfigId(null);
+      setTempYearConfig(null);
+  };
+
+  const updateTempSchedule = (index: number, field: keyof DailySchedule | 'morningStart' | 'morningEnd' | 'afternoonStart' | 'afternoonEnd', value: any) => {
+      if (!tempYearConfig) return;
+      const newSchedule = [...tempYearConfig.workingSchedule];
+      
+      if (field === 'isOff') {
+          newSchedule[index].isOff = value;
+      } else if (field === 'morningStart') {
+          newSchedule[index].morning.start = value;
+      } else if (field === 'morningEnd') {
+          newSchedule[index].morning.end = value;
+      } else if (field === 'afternoonStart') {
+          newSchedule[index].afternoon.start = value;
+      } else if (field === 'afternoonEnd') {
+          newSchedule[index].afternoon.end = value;
+      }
+
+      setTempYearConfig({ ...tempYearConfig, workingSchedule: newSchedule });
+  };
+
+  const toggleSessionOff = (index: number, session: 'morning' | 'afternoon', isOff: boolean) => {
+      if (!tempYearConfig) return;
+      const newSchedule = [...tempYearConfig.workingSchedule];
+      // Deep copy the specific day and session to avoid mutation issues
+      newSchedule[index] = { 
+          ...newSchedule[index], 
+          [session]: { ...newSchedule[index][session] } 
+      };
+
+      if (isOff) {
+          newSchedule[index][session].start = '';
+          newSchedule[index][session].end = '';
+      } else {
+          // Set defaults if turning on
+          if (session === 'morning') {
+              newSchedule[index].morning.start = '07:00';
+              newSchedule[index].morning.end = '11:30';
+          } else {
+              newSchedule[index].afternoon.start = '13:00';
+              newSchedule[index].afternoon.end = '17:00';
+          }
+      }
+      setTempYearConfig({ ...tempYearConfig, workingSchedule: newSchedule });
+  };
+
+  const addTempHoliday = () => {
+      if (!tempYearConfig) return;
+      const newHoliday: Holiday = { id: uuidv4(), name: 'Kỳ nghỉ mới', startDate: '', endDate: '' };
+      setTempYearConfig({ ...tempYearConfig, holidays: [...tempYearConfig.holidays, newHoliday] });
+  };
+
+  const removeTempHoliday = (id: string) => {
+      if (!tempYearConfig) return;
+      setTempYearConfig({ ...tempYearConfig, holidays: tempYearConfig.holidays.filter(h => h.id !== id) });
+  };
+
+  const updateTempHoliday = (id: string, field: keyof Holiday, value: string) => {
+      if (!tempYearConfig) return;
+      setTempYearConfig({
+          ...tempYearConfig,
+          holidays: tempYearConfig.holidays.map(h => h.id === id ? { ...h, [field]: value } : h)
+      });
+  };
+
+  const handleSaveSchoolInfo = () => {
+      onUpdateSchoolInfo({ 
+          school_name: editSchoolName, 
+          school_code: editSchoolCode,
+          publicDriveId: editPublicDriveId
+      });
+      setEditingSchool(false);
+  }
+
+  const startEditingYear = (year: AcademicYear) => {
+    if (year.isLocked) return;
+    setEditingYearId(year.id);
+    setEditYearCode(year.code);
+  };
+
+  const saveEditingYear = (originalYear: AcademicYear) => {
+    if (!editYearCode.trim()) return;
+    onUpdateAcademicYear({ ...originalYear, code: editYearCode.trim() });
+    setEditingYearId(null);
+  };
+
+  const cancelEditingYear = () => {
+    setEditingYearId(null);
+  };
+
+  // --- PERMISSION TOGGLE (Simulate Roles) ---
+  const handleToggleRole = (role: 'school_admin' | 'unit_manager') => {
+      const newPermission: PermissionProfile = role === 'school_admin' 
+      ? {
+          role: 'school_admin',
+          canEditDataConfig: true,
+          canEditOrgStructure: true,
+          canProposeEditProcess: true,
+          managedUnitId: undefined
+      } : {
+          role: 'unit_manager',
+          canEditDataConfig: false,
+          canEditOrgStructure: false,
+          canProposeEditProcess: false,
+          managedUnitId: 'dummy-unit-id' // Simulate restricted
+      };
+      
+      onUpdateSettings({ ...settings, permissionProfile: newPermission });
+  };
+
+  // --- DRIVE API HELPERS ---
+
+  const fetchPermissions = async (fileId: string, setState: React.Dispatch<React.SetStateAction<DrivePermission[]>>) => {
+      if (!fileId || !driveSession.isConnected) return;
+      try {
+          setIsLoadingPermissions(true);
+          const response = await window.gapi.client.drive.permissions.list({
+              fileId: fileId,
+              fields: 'permissions(id, type, emailAddress, role, displayName, photoLink)',
+          });
+          setState(response.result.permissions || []);
+      } catch (e) {
+          console.error("Error fetching permissions:", e);
+      } finally {
+          setIsLoadingPermissions(false);
+      }
+  };
+
+  const fetchFolderContent = async () => {
+      // Fetch from Zone B (System) as default
+      const targetFolderId = driveSession.zoneBId || driveSession.rootFolderId;
+      if (!targetFolderId || !driveSession.isConnected) return;
+      try {
+          setIsLoadingContent(true);
+          const response = await window.gapi.client.drive.files.list({
+              q: `'${targetFolderId}' in parents and trashed = false`,
+              fields: 'files(id, name, mimeType)',
+              pageSize: 50
+          });
+          setFolderContents(response.result.files || []);
+          setSelectedFile(null); // Reset selection
+          setSelectedFilePermissions([]);
+      } catch (e) {
+          console.error("Error fetching folder content:", e);
+      } finally {
+          setIsLoadingContent(false);
+      }
+  };
+
+  const addPermission = async (fileId: string, email: string, callback: () => void) => {
+      if (!email.includes('@')) {
+          alert("Email không hợp lệ");
+          return;
+      }
+      try {
+          setIsSharing(true);
+          await window.gapi.client.drive.permissions.create({
+              fileId: fileId,
+              resource: {
+                  role: 'reader',
+                  type: 'user',
+                  emailAddress: email
+              },
+              emailMessage: `UniData System: Bạn đã được cấp quyền ĐỌC cho tài nguyên hệ thống.`
+          });
+          alert(`Đã chia sẻ thành công với ${email}`);
+          callback(); // Reload permissions
+      } catch (e: any) {
+          console.error("Share error:", e);
+          alert("Lỗi khi chia sẻ: " + (e.result?.error?.message || e.message));
+      } finally {
+          setIsSharing(false);
+      }
+  };
+
+  const removePermission = async (fileId: string, permissionId: string, callback: () => void) => {
+      if (!confirm("Bạn có chắc muốn xóa quyền truy cập của người này?")) return;
+      try {
+          await window.gapi.client.drive.permissions.delete({
+              fileId: fileId,
+              permissionId: permissionId,
+          });
+          alert("Đã xóa quyền truy cập.");
+          callback();
+      } catch (e: any) {
+          console.error("Remove permission error:", e);
+          alert("Lỗi khi xóa quyền: " + (e.result?.error?.message || e.message));
+      }
+  };
+
+  const handleCopyId = (id: string) => {
+      navigator.clipboard.writeText(id).then(() => {
+          alert("Đã sao chép ID thư mục vào bộ nhớ đệm!");
+      });
+  };
+
+  // Sync SchoolInfo state
+  useEffect(() => {
+      setEditSchoolName(schoolInfo.school_name);
+      setEditSchoolCode(schoolInfo.school_code);
+      setEditPublicDriveId(schoolInfo.publicDriveId || '');
+  }, [schoolInfo]);
+
+  // --- EFFECTS FOR SHARING TAB ---
+  useEffect(() => {
+      // Use Zone B as default for sharing management
+      const targetId = driveSession.zoneBId;
+      if (targetId && driveSession.isConnected) {
+          fetchPermissions(targetId, setRootPermissions);
+          fetchFolderContent();
+      }
+  }, [driveSession.zoneBId, driveSession.isConnected]);
+
+  useEffect(() => {
+      if (selectedFile) {
+          fetchPermissions(selectedFile.id, setSelectedFilePermissions);
+      }
+  }, [selectedFile]);
+
+
+  return (
+    <div className="space-y-8 animate-fade-in">
+        {/* SECTION 1: School Info */}
+        <div>
+           <div className="flex justify-between items-center mb-4">
+               <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Thông tin Đơn vị Đào tạo</h3>
+               {!editingSchool && !isUnitManager ? (
+                   <button onClick={() => setEditingSchool(true)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors">
+                       <Edit2 size={16} />
+                   </button>
+               ) : editingSchool && !isUnitManager ? (
+                   <div className="flex gap-2">
+                       <button onClick={() => setEditingSchool(false)} className="px-3 py-1 text-slate-500 hover:text-slate-700 text-xs font-bold">Hủy</button>
+                       <button onClick={handleSaveSchoolInfo} className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700">Lưu</button>
+                   </div>
+               ) : (
+                   <span className="text-xs text-slate-400 italic bg-slate-100 px-2 py-1 rounded">Read-only</span>
+               )}
+           </div>
+           <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-4">
+               <div>
+                   <label className="block text-xs font-semibold text-slate-500 mb-1">Tên Trường/Đơn vị</label>
+                   {editingSchool ? (
+                       <input className="w-full p-2 border border-slate-300 rounded text-sm" value={editSchoolName} onChange={(e) => setEditSchoolName(e.target.value)} />
+                   ) : (
+                       <div className="text-sm font-bold text-slate-800">{schoolInfo.school_name}</div>
+                   )}
+               </div>
+               <div>
+                   <label className="block text-xs font-semibold text-slate-500 mb-1">Mã Đơn vị</label>
+                    {editingSchool ? (
+                       <input className="w-full p-2 border border-slate-300 rounded text-sm font-mono uppercase" value={editSchoolCode} onChange={(e) => setEditSchoolCode(e.target.value)} />
+                   ) : (
+                       <div className="text-sm font-mono font-bold text-slate-600">{schoolInfo.school_code}</div>
+                   )}
+               </div>
+               <div className="md:col-span-2">
+                   <label className="block text-xs font-semibold text-slate-500 mb-1 flex items-center gap-2">
+                       Public Drive ID (Zone C) 
+                       <Globe size={12} className="text-green-500"/>
+                   </label>
+                   {editingSchool ? (
+                       <input 
+                           className="w-full p-2 border border-slate-300 rounded text-sm font-mono text-slate-600 bg-slate-100" 
+                           value={editPublicDriveId} 
+                           onChange={(e) => setEditPublicDriveId(e.target.value)} 
+                           placeholder="Tự động cập nhật khi kết nối Drive..."
+                       />
+                   ) : (
+                       <div className="flex items-center gap-2">
+                           <div className={`text-xs font-mono font-bold px-2 py-1 rounded border ${schoolInfo.publicDriveId ? 'bg-white border-green-200 text-green-700' : 'bg-slate-200 text-slate-400 border-transparent'}`}>
+                               {schoolInfo.publicDriveId || 'Chưa định nghĩa'}
+                           </div>
+                           {schoolInfo.publicDriveId && (
+                               <button onClick={() => handleCopyId(schoolInfo.publicDriveId!)} className="text-slate-400 hover:text-green-600">
+                                   <Copy size={14}/>
+                               </button>
+                           )}
+                       </div>
+                   )}
+                   <p className="text-[10px] text-slate-400 mt-1 italic">ID thư mục dùng để chia sẻ dữ liệu công khai cho các đơn vị khác.</p>
+               </div>
+           </div>
+       </div>
+
+       {/* SECTION 2: Academic Years */}
+       <div>
+           <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wide">Quản lý Năm học</h3>
+           <div className="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4">
+               <table className="w-full text-sm text-left">
+                   <thead className="bg-slate-50 text-slate-500 font-semibold">
+                       <tr>
+                           <th className="px-4 py-3">Mã năm học</th>
+                           <th className="px-4 py-3 text-center">Trạng thái</th>
+                           <th className="px-4 py-3 text-center">Hiện tại</th>
+                           <th className="px-4 py-3 text-right">Thao tác</th>
+                       </tr>
+                   </thead>
+                   <tbody className="divide-y divide-slate-100">
+                       {academicYears.map(year => (
+                           <React.Fragment key={year.id}>
+                               <tr className="hover:bg-slate-50 transition-colors">
+                                   <td className="px-4 py-3 font-medium text-slate-800">
+                                       {editingYearId === year.id && !isUnitManager ? (
+                                           <div className="flex gap-2">
+                                               <input 
+                                                   className="w-24 px-2 py-1 border border-slate-300 rounded text-xs"
+                                                   value={editYearCode}
+                                                   onChange={(e) => setEditYearCode(e.target.value)}
+                                                   autoFocus
+                                               />
+                                               <button onClick={() => saveEditingYear(year)} className="text-green-600"><CheckCircle size={16}/></button>
+                                               <button onClick={cancelEditingYear} className="text-red-400"><X size={16}/></button>
+                                           </div>
+                                       ) : (
+                                           year.code
+                                       )}
+                                   </td>
+                                   <td className="px-4 py-3 text-center">
+                                       <button 
+                                           onClick={() => onToggleLockAcademicYear(year.id)}
+                                           className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border transition-colors ${year.isLocked ? 'bg-red-50 text-red-600 border-red-100 hover:bg-red-100' : 'bg-green-50 text-green-600 border-green-100 hover:bg-green-100'}`}
+                                       >
+                                           {year.isLocked ? <Lock size={12} /> : <Eye size={12} />}
+                                           {year.isLocked ? 'Đã khóa' : 'Đang mở'}
+                                       </button>
+                                   </td>
+                                   <td className="px-4 py-3 text-center">
+                                       <input 
+                                          type="radio" 
+                                          name="currentYear" 
+                                          checked={settings.currentAcademicYear === year.code}
+                                          onChange={() => onSetCurrentYear(year.code)}
+                                          className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                                       />
+                                   </td>
+                                   <td className="px-4 py-3 text-right">
+                                       <div className="flex justify-end gap-2">
+                                            <button onClick={() => startEditingConfig(year)} className="text-slate-400 hover:text-blue-600" title={isUnitManager || year.isLocked ? "Xem cấu hình" : "Cấu hình ngày làm việc"}>
+                                                {isUnitManager || year.isLocked ? <Eye size={16}/> : <Calendar size={16}/>}
+                                            </button>
+                                            {!year.isLocked && !isUnitManager && (
+                                                <button onClick={() => startEditingYear(year)} className="text-slate-400 hover:text-blue-600"><Edit2 size={16}/></button>
+                                            )}
+                                            {!isUnitManager && (
+                                                <button onClick={() => onDeleteAcademicYear(year.id)} className="text-slate-400 hover:text-red-600"><Trash2 size={16}/></button>
+                                            )}
+                                       </div>
+                                   </td>
+                               </tr>
+                               {editingYearConfigId === year.id && tempYearConfig && (
+                                   <tr key={`${year.id}-config`}>
+                                       <td colSpan={4} className="bg-slate-50 p-4 border-t border-slate-200 shadow-inner">
+                                           <div className="space-y-6">
+                                               {/* Working Schedule */}
+                                               <div>
+                                                   <h4 className="text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                                                       <Clock size={16} className="text-blue-600"/> Kế hoạch làm việc trong tuần
+                                                       {(isUnitManager || year.isLocked) && <span className="text-xs font-normal text-slate-500 italic">(Chỉ xem)</span>}
+                                                   </h4>
+                                                   <div className="overflow-x-auto">
+                                                       <table className="w-full text-xs border border-slate-300 bg-white rounded">
+                                                           <thead className="bg-slate-100 font-semibold text-slate-600">
+                                                               <tr>
+                                                                   <th className="p-2 border-r" rowSpan={2}>Thứ</th>
+                                                                   <th className="p-2 border-r text-center" rowSpan={2}>Cả ngày</th>
+                                                                   <th className="p-2 border-r text-center" colSpan={3}>Sáng</th>
+                                                                   <th className="p-2 text-center" colSpan={3}>Chiều</th>
+                                                               </tr>
+                                                               <tr>
+                                                                   <th className="p-1 border-r text-center w-10">Nghỉ</th>
+                                                                   <th className="p-1 border-r text-center w-20">Bắt đầu</th>
+                                                                   <th className="p-1 border-r text-center w-20">Kết thúc</th>
+                                                                   <th className="p-1 border-r text-center w-10">Nghỉ</th>
+                                                                   <th className="p-1 border-r text-center w-20">Bắt đầu</th>
+                                                                   <th className="p-1 text-center w-20">Kết thúc</th>
+                                                               </tr>
+                                                           </thead>
+                                                           <tbody>
+                                                               {tempYearConfig.workingSchedule.map((day, idx) => {
+                                                                   const isMorningOff = !day.morning.start && !day.morning.end;
+                                                                   const isAfternoonOff = !day.afternoon.start && !day.afternoon.end;
+                                                                   const readOnly = isUnitManager || year.isLocked;
+
+                                                                   return (
+                                                                       <tr key={day.day} className="border-t hover:bg-slate-50">
+                                                                           <td className="p-2 font-medium border-r">{day.day}</td>
+                                                                           <td className="p-2 text-center border-r">
+                                                                               <input 
+                                                                                   type="checkbox" 
+                                                                                   checked={day.isOff} 
+                                                                                   onChange={(e) => updateTempSchedule(idx, 'isOff', e.target.checked)}
+                                                                                   disabled={readOnly}
+                                                                               />
+                                                                           </td>
+                                                                           
+                                                                           {/* Morning */}
+                                                                           <td className="p-1 border-r text-center">
+                                                                               <input 
+                                                                                   type="checkbox"
+                                                                                   checked={isMorningOff}
+                                                                                   onChange={(e) => toggleSessionOff(idx, 'morning', e.target.checked)}
+                                                                                   disabled={day.isOff || readOnly}
+                                                                               />
+                                                                           </td>
+                                                                           <td className="p-1 border-r">
+                                                                               <input type="time" className="w-full p-1 border rounded disabled:bg-slate-100" value={day.morning.start} onChange={(e) => updateTempSchedule(idx, 'morningStart', e.target.value)} disabled={day.isOff || isMorningOff || readOnly}/>
+                                                                           </td>
+                                                                           <td className="p-1 border-r">
+                                                                               <input type="time" className="w-full p-1 border rounded disabled:bg-slate-100" value={day.morning.end} onChange={(e) => updateTempSchedule(idx, 'morningEnd', e.target.value)} disabled={day.isOff || isMorningOff || readOnly}/>
+                                                                           </td>
+
+                                                                           {/* Afternoon */}
+                                                                           <td className="p-1 border-r text-center">
+                                                                               <input 
+                                                                                   type="checkbox"
+                                                                                   checked={isAfternoonOff}
+                                                                                   onChange={(e) => toggleSessionOff(idx, 'afternoon', e.target.checked)}
+                                                                                   disabled={day.isOff || readOnly}
+                                                                               />
+                                                                           </td>
+                                                                           <td className="p-1 border-r">
+                                                                               <input type="time" className="w-full p-1 border rounded disabled:bg-slate-100" value={day.afternoon.start} onChange={(e) => updateTempSchedule(idx, 'afternoonStart', e.target.value)} disabled={day.isOff || isAfternoonOff || readOnly}/>
+                                                                           </td>
+                                                                           <td className="p-1">
+                                                                               <input type="time" className="w-full p-1 border rounded disabled:bg-slate-100" value={day.afternoon.end} onChange={(e) => updateTempSchedule(idx, 'afternoonEnd', e.target.value)} disabled={day.isOff || isAfternoonOff || readOnly}/>
+                                                                           </td>
+                                                                       </tr>
+                                                                   );
+                                                               })}
+                                                           </tbody>
+                                                       </table>
+                                                   </div>
+                                               </div>
+
+                                               {/* Holidays */}
+                                               <div>
+                                                   <div className="flex justify-between items-center mb-2">
+                                                       <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                                                           <Calendar size={16} className="text-red-500"/> Kỳ nghỉ lễ
+                                                       </h4>
+                                                       {!(isUnitManager || year.isLocked) && (
+                                                            <button onClick={addTempHoliday} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 font-medium">+ Thêm kỳ nghỉ</button>
+                                                       )}
+                                                   </div>
+                                                   <div className="space-y-2">
+                                                       {tempYearConfig.holidays.map((h) => (
+                                                           <div key={h.id} className="flex gap-2 items-center">
+                                                               <input 
+                                                                   className="flex-1 p-1.5 border border-slate-300 rounded text-xs disabled:bg-slate-100" 
+                                                                   placeholder="Tên kỳ nghỉ"
+                                                                   value={h.name}
+                                                                   onChange={(e) => updateTempHoliday(h.id, 'name', e.target.value)}
+                                                                   disabled={isUnitManager || year.isLocked}
+                                                               />
+                                                               <input 
+                                                                   type="date"
+                                                                   className="w-32 p-1.5 border border-slate-300 rounded text-xs disabled:bg-slate-100" 
+                                                                   value={h.startDate}
+                                                                   onChange={(e) => updateTempHoliday(h.id, 'startDate', e.target.value)}
+                                                                   disabled={isUnitManager || year.isLocked}
+                                                               />
+                                                               <span className="text-slate-400">-</span>
+                                                               <input 
+                                                                   type="date"
+                                                                   className="w-32 p-1.5 border border-slate-300 rounded text-xs disabled:bg-slate-100" 
+                                                                   value={h.endDate}
+                                                                   onChange={(e) => updateTempHoliday(h.id, 'endDate', e.target.value)}
+                                                                   disabled={isUnitManager || year.isLocked}
+                                                               />
+                                                               {!(isUnitManager || year.isLocked) && (
+                                                                    <button onClick={() => removeTempHoliday(h.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={14}/></button>
+                                                               )}
+                                                           </div>
+                                                       ))}
+                                                   </div>
+                                               </div>
+
+                                               <div className="flex justify-end gap-2 pt-4 border-t border-slate-200">
+                                                   <button onClick={() => setEditingYearConfigId(null)} className="px-3 py-1.5 text-slate-600 hover:bg-slate-200 rounded text-xs font-bold">
+                                                        {(isUnitManager || year.isLocked) ? 'Đóng' : 'Hủy bỏ'}
+                                                   </button>
+                                                   {!(isUnitManager || year.isLocked) && (
+                                                       <button onClick={saveConfig} className="px-3 py-1.5 bg-blue-600 text-white hover:bg-blue-700 rounded text-xs font-bold">Lưu Cấu hình</button>
+                                                   )}
+                                               </div>
+                                           </div>
+                                       </td>
+                                   </tr>
+                               )}
+                           </React.Fragment>
+                       ))}
+                   </tbody>
+               </table>
+           </div>
+           
+           {!isUnitManager && (
+               <div className="flex gap-2">
+                   <input 
+                      className="flex-1 border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Nhập mã năm học mới (VD: 2024-2025)"
+                      value={newYearCode}
+                      onChange={(e) => setNewYearCode(e.target.value)}
+                   />
+                   <button 
+                      onClick={handleAddNewYear}
+                      disabled={!newYearCode}
+                      className={`px-4 py-2 rounded text-sm font-bold text-white transition-colors flex items-center gap-2 ${!newYearCode ? 'bg-slate-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+                   >
+                       <PlusCircle size={16} /> Thêm Năm học
+                   </button>
+               </div>
+           )}
+       </div>
+
+       {/* SECTION 3: Google Drive Config */}
+       <div className="border-t border-slate-200 pt-6">
+           <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wide flex items-center gap-2">
+               <Database size={16} className="text-blue-600"/> Cấu hình Google Drive
+           </h3>
+
+           {!envClientId && (
+               <div className="mb-4 bg-amber-50 p-4 rounded-lg border border-amber-200">
+                   <div className="flex items-start gap-3">
+                       <AlertTriangle className="text-amber-500 mt-0.5" size={18} />
+                       <div>
+                           <p className="text-sm font-bold text-amber-800">Chưa cấu hình Google Client ID trong biến môi trường!</p>
+                           <p className="text-xs text-amber-700 mt-1">
+                               Vui lòng nhập Client ID thủ công bên dưới để kết nối. Để bảo mật và tiện lợi lâu dài, hãy thêm <code>VITE_GOOGLE_CLIENT_ID</code> vào file <code>.env</code>.
+                           </p>
+                           <input 
+                               className="mt-2 w-full p-2 border border-amber-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
+                               placeholder="Enter your Google Client ID here..."
+                               value={manualClientId}
+                               onChange={(e) => setManualClientId(e.target.value)}
+                           />
+                       </div>
+                   </div>
+               </div>
+           )}
+
+           <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 space-y-6">
+               {/* Connection Status */}
+               <div className="flex justify-between items-center">
+                   <div>
+                       <p className="text-sm font-bold text-slate-700">Trạng thái kết nối</p>
+                       <div className="flex items-center gap-2 mt-1">
+                           <span className={`w-3 h-3 rounded-full ${driveSession.isConnected ? 'bg-green-50' : 'bg-slate-300'}`}></span>
+                           <span className="text-sm text-slate-600">{driveSession.isConnected ? `Đã kết nối: ${driveSession.accountName}` : 'Chưa kết nối'}</span>
+                       </div>
+                   </div>
+                   {driveSession.isConnected ? (
+                       <button onClick={onDisconnectDrive} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200 rounded-lg text-sm font-bold transition-all shadow-sm">
+                           Ngắt kết nối
+                       </button>
+                   ) : (
+                       <button onClick={onConnectDrive} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-sm font-bold transition-all shadow-sm flex items-center gap-2">
+                           <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" className="w-4 h-4 bg-white rounded-full p-0.5" alt="G" />
+                           Kết nối với Google
+                       </button>
+                   )}
+               </div>
+
+               {/* Folder Management Tree View */}
+               {driveSession.isConnected && (
+                   <div className="border-t border-slate-200 pt-6">
+                       <h4 className="text-sm font-bold text-slate-700 mb-4">Cấu trúc Thư mục Hệ thống</h4>
+                       
+                       <div className="space-y-2 mb-4 font-mono text-sm">
+                            {/* ROOT */}
+                            <div className={`p-3 rounded-lg border flex items-center gap-3 ${scanStatus?.foundFolder ? 'bg-white border-green-200' : 'bg-red-50 border-red-200'}`}>
+                                <Folder size={20} className={scanStatus?.foundFolder ? 'text-green-600' : 'text-red-500'} />
+                                <div className="flex-1">
+                                    <div className="flex justify-between">
+                                        <span className="font-bold text-slate-800">Root: UniData_Store (Level 0)</span>
+                                        <span className={`text-xs px-2 py-0.5 rounded ${scanStatus?.foundFolder ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{scanStatus?.foundFolder ? 'Found' : 'Missing'}</span>
+                                    </div>
+                                    <p className="text-xs text-slate-500">Container chính (Owner Only)</p>
+                                </div>
+                            </div>
+
+                            {/* ZONES */}
+                            <div className="pl-8 space-y-2 border-l-2 border-slate-200 ml-4">
+                                {/* Zone A */}
+                                <div className={`p-2 rounded border flex items-center gap-3 ${scanStatus?.foundZoneA ? 'bg-white border-slate-200' : 'bg-slate-100 border-slate-200'}`}>
+                                    <Lock size={16} className="text-slate-500" />
+                                    <div className="flex-1">
+                                        <div className="flex justify-between">
+                                            <span className="font-bold text-slate-700">Zone A: UniData_Private</span>
+                                            {scanStatus?.foundZoneA && <CheckCircle size={14} className="text-green-500"/>}
+                                        </div>
+                                        <p className="text-[10px] text-slate-500">Dữ liệu nhạy cảm (Lương, Nháp)</p>
+                                    </div>
+                                </div>
+
+                                {/* Zone B */}
+                                <div className={`p-2 rounded border flex items-center gap-3 ${scanStatus?.foundZoneB ? 'bg-blue-50 border-blue-200' : 'bg-slate-100 border-slate-200'}`}>
+                                    <HardDrive size={16} className="text-blue-600" />
+                                    <div className="flex-1">
+                                        <div className="flex justify-between">
+                                            <span className="font-bold text-blue-800">Zone B: UniData_System</span>
+                                            {scanStatus?.foundZoneB && <CheckCircle size={14} className="text-green-500"/>}
+                                        </div>
+                                        <p className="text-[10px] text-blue-600">Cấu hình, Báo cáo (Shared Limit)</p>
+                                    </div>
+                                </div>
+
+                                {/* Zone C */}
+                                <div className={`p-2 rounded border flex flex-col gap-2 ${scanStatus?.foundZoneC ? 'bg-green-50 border-green-200' : 'bg-slate-100 border-slate-200'}`}>
+                                    <div className="flex items-center gap-3">
+                                        <Globe size={16} className="text-green-600" />
+                                        <div className="flex-1">
+                                            <div className="flex justify-between">
+                                                <span className="font-bold text-green-800">Zone C: UniData_Public</span>
+                                                {scanStatus?.foundZoneC && <CheckCircle size={14} className="text-green-500"/>}
+                                            </div>
+                                            <p className="text-[10px] text-green-600">Công khai (Public Read-only)</p>
+                                        </div>
+                                    </div>
+                                    {/* ID Display & Copy Button */}
+                                    {scanStatus?.foundZoneC && driveSession.zoneCId && (
+                                        <div className="ml-7 flex flex-col gap-2">
+                                            <div className="flex items-center gap-2 bg-white/60 p-1.5 rounded border border-green-100">
+                                                <span className="text-[10px] text-green-700 font-mono flex-1 truncate">ID: {driveSession.zoneCId}</span>
+                                                <button 
+                                                    onClick={() => handleCopyId(driveSession.zoneCId!)}
+                                                    className="p-1 hover:bg-green-200 rounded text-green-700 transition-colors"
+                                                    title="Sao chép ID để chia sẻ"
+                                                >
+                                                    <Copy size={12}/>
+                                                </button>
+                                            </div>
+                                            {onUpdatePublicRegistry && !isUnitManager && (
+                                                <button 
+                                                    onClick={onUpdatePublicRegistry}
+                                                    disabled={isUpdatingRegistry}
+                                                    className="w-full bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-bold border border-green-200 hover:bg-green-200 flex items-center justify-center gap-1"
+                                                >
+                                                    {isUpdatingRegistry ? <Loader2 size={10} className="animate-spin"/> : <Share2 size={10}/>}
+                                                    Cập nhật Registry (Zone_C.json)
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                       </div>
+
+                       {!scanStatus?.foundFolder && (
+                           <div className="mb-4">
+                               <button 
+                                   onClick={onCreateDefaultFolders} 
+                                   disabled={isCreatingFolder}
+                                   className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700 disabled:bg-blue-300 flex items-center justify-center gap-2"
+                               >
+                                   {isCreatingFolder ? <Loader2 size={16} className="animate-spin"/> : <PlusCircle size={16}/>}
+                                   Khởi tạo Cấu trúc Chuẩn (Root & Zones)
+                               </button>
+                           </div>
+                       )}
+
+                        {/* External Source Folder Config */}
+                        <div className="mt-6 pt-6 border-t border-slate-200">
+                           <h5 className="text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                               <Share2 size={16} className="text-purple-600"/>
+                               Cấu hình Nguồn Dữ liệu Mở rộng (External Source)
+                           </h5>
+                           <p className="text-xs text-slate-500 mb-3">
+                               Nhập ID của thư mục được chia sẻ từ người dùng khác (nếu có) để truy cập dữ liệu báo cáo của họ ở chế độ chỉ đọc.
+                           </p>
+                           <div className="flex gap-2">
+                               <input 
+                                   className="flex-1 p-2 border border-slate-300 rounded text-sm font-mono"
+                                   placeholder="Folder ID (e.g. 1A2B3C...)"
+                                   value={externalSourceFolderId || ''}
+                                   onChange={(e) => setExternalSourceFolderId && setExternalSourceFolderId(e.target.value)}
+                               />
+                               <button 
+                                   onClick={onSaveDriveConfigOnly}
+                                   className="px-4 py-2 bg-purple-600 text-white rounded text-sm font-bold hover:bg-purple-700"
+                               >
+                                   Lưu Config
+                               </button>
+                           </div>
+                       </div>
+                       
+                       {/* Sharing Manager - Targeted to Zone B (System) */}
+                        {driveSession.zoneBId && (
+                           <div className="mt-6 pt-6 border-t border-slate-200">
+                               <h5 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                                   <Users size={16} className="text-indigo-600"/>
+                                   Quản lý Chia sẻ (Zone B: System)
+                               </h5>
+                               
+                               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                   {/* Root Permissions */}
+                                   <div className="bg-white p-4 rounded-lg border border-slate-200">
+                                       <div className="flex justify-between items-center mb-3">
+                                            <span className="text-xs font-bold uppercase text-slate-500">Thư mục Hệ thống (Zone B)</span>
+                                            <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500">{rootPermissions.length} users</span>
+                                       </div>
+                                       
+                                       {/* Add User */}
+                                       <div className="flex gap-2 mb-3">
+                                            <input 
+                                                className="flex-1 p-1.5 border border-slate-300 rounded text-xs"
+                                                placeholder="Email người nhận..."
+                                                value={shareEmailRoot}
+                                                onChange={(e) => setShareEmailRoot(e.target.value)}
+                                            />
+                                            <button 
+                                                onClick={() => addPermission(driveSession.zoneBId!, shareEmailRoot, () => {
+                                                    setShareEmailRoot('');
+                                                    fetchPermissions(driveSession.zoneBId!, setRootPermissions);
+                                                })}
+                                                disabled={isSharing || !shareEmailRoot}
+                                                className="px-2 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-700 disabled:bg-slate-300"
+                                            >
+                                                {isSharing ? <Loader2 size={12} className="animate-spin"/> : <UserPlus size={14}/>}
+                                            </button>
+                                       </div>
+
+                                       <div className="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
+                                           {rootPermissions.map(perm => (
+                                               <div key={perm.id} className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-100 group">
+                                                   <div className="flex items-center gap-2 overflow-hidden">
+                                                       {perm.photoLink ? <img src={perm.photoLink} className="w-5 h-5 rounded-full" /> : <div className="w-5 h-5 rounded-full bg-slate-300 flex items-center justify-center text-[8px]">{perm.displayName?.[0]}</div>}
+                                                       <div className="flex-1 min-w-0">
+                                                           <p className="text-xs font-bold text-slate-700 truncate">{perm.displayName || 'Unknown'}</p>
+                                                           <p className="text-[10px] text-slate-500 truncate">{perm.emailAddress}</p>
+                                                       </div>
+                                                   </div>
+                                                   <div className="flex items-center gap-1">
+                                                       <span className="text-[9px] uppercase font-bold text-slate-400 bg-white px-1 rounded border">{perm.role}</span>
+                                                       {perm.role !== 'owner' && (
+                                                           <button 
+                                                               onClick={() => removePermission(driveSession.zoneBId!, perm.id, () => fetchPermissions(driveSession.zoneBId!, setRootPermissions))}
+                                                               className="text-slate-300 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                           >
+                                                               <Trash2 size={12}/>
+                                                           </button>
+                                                       )}
+                                                   </div>
+                                               </div>
+                                           ))}
+                                       </div>
+                                   </div>
+
+                                   {/* File Permissions */}
+                                   <div className="bg-white p-4 rounded-lg border border-slate-200 flex flex-col">
+                                       <div className="flex justify-between items-center mb-3">
+                                            <span className="text-xs font-bold uppercase text-slate-500">Phân quyền theo File</span>
+                                            {isLoadingContent && <Loader2 size={12} className="animate-spin text-slate-400"/>}
+                                       </div>
+                                       
+                                       <div className="flex-1 flex flex-col min-h-0">
+                                           {/* File Selector */}
+                                            <select 
+                                                className="w-full p-1.5 border border-slate-300 rounded text-xs mb-3 bg-slate-50"
+                                                onChange={(e) => {
+                                                    const f = folderContents.find(file => file.id === e.target.value);
+                                                    setSelectedFile(f || null);
+                                                }}
+                                                value={selectedFile?.id || ''}
+                                            >
+                                                <option value="">-- Chọn file trong Zone B --</option>
+                                                {folderContents.map(f => (
+                                                    <option key={f.id} value={f.id}>{f.name}</option>
+                                                ))}
+                                            </select>
+
+                                            {selectedFile ? (
+                                                <>
+                                                    <div className="flex gap-2 mb-3">
+                                                        <input 
+                                                            className="flex-1 p-1.5 border border-slate-300 rounded text-xs"
+                                                            placeholder={`Chia sẻ "${selectedFile.name}"...`}
+                                                            value={shareEmailFile}
+                                                            onChange={(e) => setShareEmailFile(e.target.value)}
+                                                        />
+                                                        <button 
+                                                            onClick={() => addPermission(selectedFile.id, shareEmailFile, () => {
+                                                                setShareEmailFile('');
+                                                                fetchPermissions(selectedFile.id, setSelectedFilePermissions);
+                                                            })}
+                                                            disabled={isSharing || !shareEmailFile}
+                                                            className="px-2 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-700 disabled:bg-slate-300"
+                                                        >
+                                                            {isSharing ? <Loader2 size={12} className="animate-spin"/> : <UserPlus size={14}/>}
+                                                        </button>
+                                                    </div>
+                                                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
+                                                       {selectedFilePermissions.length === 0 && <p className="text-xs text-slate-400 italic text-center py-2">Chưa có quyền riêng lẻ.</p>}
+                                                       {selectedFilePermissions.map(perm => (
+                                                           <div key={perm.id} className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-100 group">
+                                                               <div className="flex-1 min-w-0 pr-2">
+                                                                   <p className="text-xs font-bold text-slate-700 truncate">{perm.displayName || perm.emailAddress}</p>
+                                                                   <p className="text-[10px] text-slate-500 truncate">{perm.role}</p>
+                                                               </div>
+                                                               {perm.role !== 'owner' && (
+                                                                   <button 
+                                                                       onClick={() => removePermission(selectedFile.id, perm.id, () => fetchPermissions(selectedFile.id, setSelectedFilePermissions))}
+                                                                       className="text-slate-300 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                   >
+                                                                       <Trash2 size={12}/>
+                                                                   </button>
+                                                               )}
+                                                           </div>
+                                                       ))}
+                                                    </div>
+                                                </>
+                                            ) : (
+                                                <div className="flex-1 flex items-center justify-center text-slate-300 text-xs italic border border-dashed border-slate-200 rounded">
+                                                    Chọn file để xem quyền chi tiết
+                                                </div>
+                                            )}
+                                       </div>
+                                   </div>
+                               </div>
+                           </div>
+                       )}
+
+                   </div>
+               )}
+           </div>
+       </div>
+
+       {/* SECTION 4: System Configs */}
+       <div className="border-t border-slate-200 pt-6">
+           <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wide flex items-center gap-2">
+               <Settings size={16} className="text-slate-600"/> Cấu hình Tham số
+           </h3>
+           <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+               <label className="block text-xs font-semibold text-slate-500 mb-1">URL Trợ lý ảo (Virtual Assistant)</label>
+               <div className="flex gap-2">
+                   <input 
+                       className="flex-1 p-2 border border-slate-300 rounded text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                       value={virtualAssistantUrl}
+                       onChange={(e) => setVirtualAssistantUrl(e.target.value)}
+                       disabled={isUnitManager}
+                   />
+                   {!isUnitManager && (
+                        <button onClick={handleSaveGeneral} className="px-4 py-2 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700">Lưu</button>
+                   )}
+               </div>
+               <p className="text-[10px] text-slate-400 mt-1">
+                   Mặc định: <code>https://gemini.google.com/app</code>. Dùng để mở nhanh từ giao diện nhập liệu.
+               </p>
+           </div>
+       </div>
+    </div>
+  );
+};
+
+export default GeneralConfigModule;

@@ -1,0 +1,5 @@
+{
+  "name": "WorkFlow UniData",
+  "description": "A centralized digital data warehouse for university administrative reports, featuring AI-powered extraction, statistical analysis, and trend forecasting. Tích hợp thêm hệ thống quản lý quy trình theo ISO và theo dõi workflows",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,261 @@
+import React from 'react';
+import { ViewState, GoogleDriveConfig, UserProfile } from '../types';
+import { CloudUpload, Download, LogIn, LogOut, Shield, Building, User } from 'lucide-react';
+
+interface SidebarProps {
+  currentView: ViewState;
+  onViewChange: (view: ViewState) => void;
+  schoolName: string;
+  currentAcademicYear: string;
+  isCollapsed: boolean;
+  toggleSidebar: () => void;
+  hasUnsavedChanges: boolean;
+  onSaveToCloud: () => void;
+  
+  // Auth & User Props
+  driveSession: GoogleDriveConfig;
+  currentUser?: UserProfile;
+  managedUnitName?: string;
+  onConnectDrive: () => void;
+  onDisconnectDrive: () => void;
+}
+
+const Sidebar: React.FC<SidebarProps> = ({ 
+  currentView, 
+  onViewChange, 
+  schoolName, 
+  currentAcademicYear, 
+  isCollapsed, 
+  toggleSidebar,
+  hasUnsavedChanges,
+  onSaveToCloud,
+  driveSession,
+  currentUser,
+  managedUnitName,
+  onConnectDrive,
+  onDisconnectDrive
+}) => {
+  const menuItems: { id: ViewState; label: string; icon: React.ReactNode }[] = [
+    {
+      id: 'dashboard',
+      label: 'Tổng quan (Dashboard)',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+        </svg>
+      ),
+    },
+    {
+      id: 'scientific_management',
+      label: 'Quản lý Thông tin',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+        </svg>
+      ),
+    },
+    {
+      id: 'faculty_profiles',
+      label: 'Hồ sơ Nhân sự',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
+        </svg>
+      ),
+    },
+    {
+      id: 'organization',
+      label: 'Cơ cấu tổ chức',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2 2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+        </svg>
+      ),
+    },
+    {
+      id: 'iso_designer' as ViewState,
+      label: 'Quy trình công việc',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+        </svg>
+      ),
+    },
+    {
+      id: 'workflow_engine' as ViewState,
+      label: 'Thực thi Quy trình',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+    },
+    {
+      id: 'settings',
+      label: 'Cài đặt hệ thống',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+    },
+  ];
+
+  const isConnected = driveSession.isConnected;
+
+  return (
+    <div 
+      className={`bg-slate-800 text-white min-h-screen flex flex-col shadow-xl transition-all duration-300 ${isCollapsed ? 'w-20' : 'w-64'}`}
+    >
+      {/* Header */}
+      <div className="p-4 border-b border-slate-700 flex flex-col items-start justify-between gap-3">
+        <div className="flex items-center justify-between w-full">
+            {!isCollapsed && (
+            <div className="overflow-hidden">
+                <h1 className="text-xl font-bold tracking-tight text-blue-400 whitespace-nowrap">UniData</h1>
+                <p className="text-xs text-slate-400 mt-1 truncate" title={schoolName}>{schoolName}</p>
+                <h2 className="text-sm font-bold text-white mt-1">{currentAcademicYear}</h2>
+            </div>
+            )}
+            <button 
+            onClick={toggleSidebar}
+            className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+            >
+            {isCollapsed ? (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+            ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+            )}
+            </button>
+        </div>
+
+        {/* Action Buttons */}
+        {!isCollapsed && (
+            <div className="w-full flex gap-2 mt-2">
+                <button 
+                    onClick={onSaveToCloud}
+                    disabled={!isConnected}
+                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 px-2 rounded text-xs font-bold transition-all ${
+                        hasUnsavedChanges 
+                            ? 'bg-green-600 text-white shadow-md hover:bg-green-700 animate-pulse' 
+                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white'
+                    }`}
+                    title={isConnected ? "Lưu thay đổi lên Đám mây" : "Chưa kết nối Google Drive"}
+                >
+                    <CloudUpload size={14}/>
+                    Lưu phiên làm việc
+                </button>
+            </div>
+        )}
+        {isCollapsed && hasUnsavedChanges && (
+             <div className="flex flex-col gap-2 mt-2 w-full items-center">
+                <button onClick={onSaveToCloud} className="p-2 bg-green-600 rounded-full text-white animate-pulse" title="Lưu Cloud"><CloudUpload size={14}/></button>
+             </div>
+        )}
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 p-2 space-y-1 overflow-y-auto custom-scrollbar">
+        {menuItems.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => onViewChange(item.id)}
+            className={`flex items-center w-full px-3 py-3 rounded-lg transition-colors duration-200 group relative ${
+              currentView === item.id
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+            } ${isCollapsed ? 'justify-center' : ''}`}
+            title={isCollapsed ? item.label : ''}
+          >
+            <span className={`${isCollapsed ? '' : 'mr-3'}`}>{item.icon}</span>
+            {!isCollapsed && <span className="text-sm font-medium">{item.label}</span>}
+          </button>
+        ))}
+      </nav>
+
+      {/* User Info & Auth */}
+      <div className="p-4 border-t border-slate-700 bg-slate-900/30">
+        {!isConnected ? (
+            // STATE: NOT LOGGED IN
+            <div className={`flex flex-col ${isCollapsed ? 'items-center' : 'items-start'} gap-3`}>
+                {!isCollapsed ? (
+                    <>
+                        <div className="flex items-center gap-2 text-slate-400">
+                            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center">
+                                <User size={16}/>
+                            </div>
+                            <span className="text-xs font-medium">Chưa đăng nhập</span>
+                        </div>
+                        <button 
+                            onClick={onConnectDrive}
+                            className="w-full flex items-center justify-center gap-2 bg-white text-slate-900 hover:bg-slate-100 py-2 px-3 rounded-lg text-xs font-bold transition-colors"
+                        >
+                            <LogIn size={14}/> Kết nối Google
+                        </button>
+                    </>
+                ) : (
+                    <button 
+                        onClick={onConnectDrive}
+                        className="p-2 bg-white text-slate-900 rounded-full hover:bg-slate-200 transition-colors"
+                        title="Đăng nhập Google"
+                    >
+                        <LogIn size={16}/>
+                    </button>
+                )}
+            </div>
+        ) : (
+            // STATE: LOGGED IN
+            <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between space-x-2'}`}>
+                <div className="flex items-center gap-3 overflow-hidden">
+                    <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold text-white shadow-sm flex-shrink-0 border border-indigo-400">
+                        {driveSession.accountName ? driveSession.accountName.charAt(0).toUpperCase() : 'U'}
+                    </div>
+                    {!isCollapsed && (
+                        <div className="flex flex-col min-w-0">
+                            <p className="text-sm font-bold text-white truncate" title={driveSession.accountName}>
+                                {driveSession.accountName}
+                            </p>
+                            
+                            {/* Role Badge */}
+                            <div className="flex items-center gap-1 mt-0.5">
+                                {currentUser?.role === 'school_admin' ? (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                        <Shield size={8}/> Admin
+                                    </span>
+                                ) : (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                        <Building size={8}/> Manager
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Managed Unit Name */}
+                            {currentUser?.role === 'unit_manager' && managedUnitName && (
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5" title={managedUnitName}>
+                                    {managedUnitName}
+                                </p>
+                            )}
+                        </div>
+                    )}
+                </div>
+                
+                {/* Disconnect Button */}
+                {!isCollapsed && (
+                    <button 
+                        onClick={onDisconnectDrive}
+                        className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-slate-800 transition-colors"
+                        title="Ngắt kết nối"
+                    >
+                        <LogOut size={16}/>
+                    </button>
+                )}
+            </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default Sidebar;
